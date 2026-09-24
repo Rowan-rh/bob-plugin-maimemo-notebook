@@ -1,6 +1,6 @@
 {
   "identifier": "cc.chriscurry.bobplugin.maimemo.notebook",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "category": "translate",
   "name": "墨墨云词本",
   "summary": "导入单词到墨墨云词本，支持 MiniMax CN AI 从句子中提取单词和短语",
