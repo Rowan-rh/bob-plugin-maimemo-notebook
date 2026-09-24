@@ -2,11 +2,16 @@ import {
   createNotepad,
   addSentenceToWord,
   addWordsToNotepad,
-  findVocabularyId,
   notepadIdFilePath,
 } from "./maimemo";
-import { analyzeSentence, formatCustomTerm } from "./analyze";
-import { translateByLLM } from "./translate";
+import { extractTerms } from "./analyze";
+import { logFilePath, summarize, writeLog } from "./logger";
+import {
+  hasProviderKey,
+  LLMProvider,
+  providerNames,
+  translateByLLM,
+} from "./translate";
 import { BobQuery, BobTranslationErrorType } from "./types";
 
 export function supportLanguages() {
@@ -24,84 +29,48 @@ async function addEntriesToNotepad(entries: string[], configuredNotepadId?: stri
     : createNotepad(entries);
 }
 
-async function analyzeAndAddSentence(
+function getExtractProvider(): LLMProvider | null {
+  const value = $option.extractProvider || "minimax";
+  return value === "minimax" || value === "openai" || value === "bigmodel"
+    ? value
+    : null;
+}
+
+async function extractAndAddTerms(
   text: string,
-  configuredNotepadId: string | undefined,
-  canAddSentence: boolean
+  provider: LLMProvider,
+  configuredNotepadId?: string
 ) {
-  const paragraphs = text
-    .split(/\r?\n/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-  const hasManualTermList = canAddSentence && paragraphs.length > 1;
-  const sentence = hasManualTermList
-    ? paragraphs.slice(1).join("\n")
-    : text.trim();
-  const preferredTerms = hasManualTermList
-    ? paragraphs[0]
-        .split(",")
-        .map((term) => term.trim())
-        .filter(Boolean)
-    : [];
-  const analysis = await analyzeSentence(sentence, preferredTerms);
-  if (analysis.terms.length === 0) {
-    throw new Error("AI 没有识别出可加入词本的单词或短语");
+  const terms = await extractTerms(text.trim(), provider);
+  if (terms.length === 0) {
+    throw new Error("AI 没有提取到可加入词本的单词或短语");
   }
-
-  const classifiedTerms = await Promise.all(
-    analysis.terms.map(async (term) => {
-      const vocabularyId = await findVocabularyId(term.term);
-      return {
-        term,
-        vocabularyId,
-        entry: vocabularyId ? term.term : formatCustomTerm(term),
-      };
-    })
-  );
-
-  const notepadMessage = await addEntriesToNotepad(
-    classifiedTerms.map(({ entry }) => entry),
-    configuredNotepadId
-  );
-
-  let exampleMessage = "";
-  if (canAddSentence) {
-    const knownWords = classifiedTerms.filter(
-      ({ term, vocabularyId }) => vocabularyId && term.kind === "word"
-    );
-    if (knownWords.length > 0) {
-      const exampleResults = await Promise.allSettled(
-        knownWords.map(({ term, vocabularyId }) =>
-          addSentenceToWord(
-            term.term,
-            sentence,
-            analysis.translation,
-            vocabularyId!
-          )
-        )
-      );
-      const successCount = exampleResults.filter(
-        (result) => result.status === "fulfilled"
-      ).length;
-      const failureCount = exampleResults.length - successCount;
-      if (successCount > 0) {
-        exampleMessage = `，例句已添加到 ${successCount} 个墨墨词条`;
-      }
-      if (failureCount > 0) {
-        exampleMessage += `，${failureCount} 个例句添加失败`;
-      }
-    }
-  }
-
-  const knownCount = classifiedTerms.filter(
-    ({ vocabularyId }) => !!vocabularyId
-  ).length;
-  const customCount = classifiedTerms.length - knownCount;
-  return `AI 分析完成：墨墨已收录 ${knownCount} 项，自定义词条 ${customCount} 项。${notepadMessage}${exampleMessage}`;
+  const notepadMessage = await addEntriesToNotepad(terms, configuredNotepadId);
+  return `AI 提取了 ${terms.length} 个词条：${notepadMessage}`;
 }
 
 export function translate(query: BobQuery) {
-  const { text, detectFrom, onCompletion } = query;
+  const { text, detectFrom } = query;
+  writeLog(
+    `==== 新请求 ==== 语言：${detectFrom}，文本：${summarize(text)}；配置：` +
+      summarize({
+        墨墨Token: !!$option.maimemoToken,
+        云词本ID: $option.notepadId || "（未填写）",
+        缓存的云词本ID: $file.exists(notepadIdFilePath)
+          ? $file.read(notepadIdFilePath).toUTF8()
+          : "（无）",
+        例句模式: $option.canAddSentence,
+        提取服务: $option.extractProvider || "minimax（默认）",
+        MiniMaxKey: !!$option.miniMaxCNApiKey,
+        MiniMax模型: $option.miniMaxCNModel,
+        智谱Key: !!$option.bigModelApiKey,
+        OpenAIKey: !!$option.openaiApiKey,
+      })
+  );
+  const onCompletion: typeof query.onCompletion = (result) => {
+    writeLog(`==== 结束 ==== ${summarize(result)}（日志文件：${logFilePath}）`);
+    query.onCompletion(result);
+  };
   const {
     maimemoToken,
     notepadId: _notepadId,
@@ -110,6 +79,7 @@ export function translate(query: BobQuery) {
     openaiApiKey,
     miniMaxCNApiKey,
   } = $option;
+  const extractProvider = getExtractProvider();
 
   if (detectFrom !== "en") {
     onCompletion({
@@ -124,8 +94,21 @@ export function translate(query: BobQuery) {
   const wordNum = text.trim().split(/\s+/);
   const maybeSentence = wordNum.length > 2;
   const canAddSentence = _canAddSentence === "true";
+  const lineCount = text.split("\n").filter((line) => !!line.trim()).length;
+  // 例句模式下「第一行词条 + 第二行例句」是用户手动指定的格式，走原有流程
+  const hasManualTermList = canAddSentence && lineCount > 1;
 
-  if (text.trim() && miniMaxCNApiKey) {
+  // 开启 AI 提取时，句子/段落交给所选大模型拆出单词和短语；单个单词直接走原有流程
+  if (extractProvider && maybeSentence && !hasManualTermList) {
+    if (!hasProviderKey(extractProvider)) {
+      onCompletion({
+        error: {
+          type: BobTranslationErrorType.NoSecretKey,
+          message: `已选择用${providerNames[extractProvider]}提取词条，但未配置它的 API Key`,
+        },
+      });
+      return;
+    }
     if (!maimemoToken) {
       onCompletion({
         error: {
@@ -136,7 +119,7 @@ export function translate(query: BobQuery) {
       return;
     }
 
-    analyzeAndAddSentence(text, _notepadId, canAddSentence)
+    extractAndAddTerms(text, extractProvider, _notepadId)
       .then((message) => {
         onCompletion({ result: { toParagraphs: [message] } });
       })

@@ -1,3 +1,4 @@
+import { loggedRequest } from "./logger";
 const bigModelApiEndpoint =
   "https://open.bigmodel.cn/api/paas/v4/chat/completions";
 
@@ -12,6 +13,7 @@ interface ChatCompletionResponse {
     status_msg?: string;
   };
   choices?: {
+    finish_reason?: string;
     message?: {
       content?: string;
     };
@@ -40,14 +42,41 @@ function getBearerToken(apiKey: string) {
     : `Bearer ${apiKey.trim()}`;
 }
 
-function getChatCompletionContent(resp: ChatCompletionResponse) {
+function getChatCompletionContent(
+  raw: ChatCompletionResponse | string | undefined
+) {
+  let resp: ChatCompletionResponse | undefined;
+  if (typeof raw === "string") {
+    try {
+      resp = JSON.parse(raw);
+    } catch (_error) {
+      throw new Error(`大模型接口返回了非 JSON 响应：${raw.slice(0, 120)}`);
+    }
+  } else {
+    resp = raw;
+  }
+  if (!resp) {
+    throw new Error("大模型接口没有返回内容，请检查网络或 API Key");
+  }
+
   if (resp.base_resp && resp.base_resp.status_code !== undefined) {
     if (resp.base_resp.status_code !== 0) {
       throw new Error(resp.base_resp.status_msg || "大模型请求失败");
     }
   }
 
-  const content = resp.choices?.[0]?.message?.content?.trim();
+  const choice = resp.choices?.[0];
+  if (choice?.finish_reason === "length") {
+    throw new Error("大模型输出超过长度上限被截断，请减少划选内容后重试");
+  }
+
+  // MiniMax M2.x 等推理模型会把思考过程以 <think>...</think> 写在正文里，这里统一去掉
+  const content = choice?.message?.content
+    ?.replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .trim();
+  if (content && /^<think>/i.test(content)) {
+    throw new Error("大模型的思考过程被截断，没有输出结果，请重试");
+  }
   if (!content) {
     throw new Error("大模型没有返回文本");
   }
@@ -57,8 +86,7 @@ function getChatCompletionContent(resp: ChatCompletionResponse) {
 
 async function chatByMiniMaxCN(systemPrompt: string, input: string) {
   const apiKey = $option.miniMaxCNApiKey!;
-  return $http
-    .request<ChatCompletionResponse>({
+  return loggedRequest<ChatCompletionResponse>({
       method: "POST",
       url: miniMaxCNApiEndpoint,
       header: {
@@ -73,15 +101,15 @@ async function chatByMiniMaxCN(systemPrompt: string, input: string) {
         ],
         stream: false,
         temperature: 0.2,
-        max_completion_tokens: 4096,
+        // 推理模型的思考过程也计入该上限，4096 很容易把 JSON 截断
+        max_completion_tokens: 16384,
       },
     })
     .then((_resp) => getChatCompletionContent(_resp.data));
 }
 
 async function chatByBigModel(systemPrompt: string, input: string) {
-  return $http
-    .request<ChatCompletionResponse>({
+  return loggedRequest<ChatCompletionResponse>({
       method: "POST",
       url: bigModelApiEndpoint,
       header: {
@@ -100,8 +128,7 @@ async function chatByBigModel(systemPrompt: string, input: string) {
 }
 
 async function chatByOpenAI(systemPrompt: string, input: string) {
-  return $http
-    .request<OpenAIResponse>({
+  return loggedRequest<OpenAIResponse>({
       method: "POST",
       url: openaiApiEndpoint,
       header: {
@@ -136,6 +163,43 @@ async function chatByOpenAI(systemPrompt: string, input: string) {
     });
 }
 
+export type LLMProvider = "minimax" | "openai" | "bigmodel";
+
+export const providerNames: Record<LLMProvider, string> = {
+  minimax: "MiniMax CN",
+  openai: "OpenAI",
+  bigmodel: "智谱",
+};
+
+export function hasProviderKey(provider: LLMProvider) {
+  const keys: Record<LLMProvider, string | undefined> = {
+    minimax: $option.miniMaxCNApiKey,
+    openai: $option.openaiApiKey,
+    bigmodel: $option.bigModelApiKey,
+  };
+  return !!keys[provider]?.trim();
+}
+
+/** 使用指定的大模型服务 */
+export async function chatWithProvider(
+  provider: LLMProvider,
+  systemPrompt: string,
+  input: string
+) {
+  if (!hasProviderKey(provider)) {
+    throw new Error(`未配置${providerNames[provider]} API Key`);
+  }
+  switch (provider) {
+    case "minimax":
+      return chatByMiniMaxCN(systemPrompt, input);
+    case "openai":
+      return chatByOpenAI(systemPrompt, input);
+    case "bigmodel":
+      return chatByBigModel(systemPrompt, input);
+  }
+}
+
+/** 按 MiniMax CN > OpenAI > 智谱 的优先级选择已配置的大模型 */
 export async function chatWithLLM(systemPrompt: string, input: string) {
   if ($option.miniMaxCNApiKey) {
     return chatByMiniMaxCN(systemPrompt, input);

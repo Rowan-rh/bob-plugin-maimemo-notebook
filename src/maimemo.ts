@@ -1,3 +1,4 @@
+import { loggedRequest } from "./logger";
 const apiEndpoint = "https://open.maimemo.com/open/api/v1";
 export const notepadIdFilePath = "$sandbox/notepad-id.txt";
 
@@ -31,6 +32,36 @@ function getHeader() {
   };
 }
 
+/** 把墨墨接口的失败响应整理成可读的原因（HTTP 状态码 + 接口返回的错误信息） */
+function describeFailure(action: string, resp: any) {
+  const status = resp?.response?.statusCode;
+  const data = resp?.data;
+  let detail = "";
+  if (typeof data === "string") {
+    detail = data;
+  } else if (data && typeof data === "object") {
+    const errors = Array.isArray(data.errors) ? data.errors : [];
+    detail = errors.length
+      ? errors
+          .map((e: any) =>
+            typeof e === "string"
+              ? e
+              : [e?.code, e?.msg || e?.message].filter(Boolean).join(" ") ||
+                JSON.stringify(e)
+          )
+          .join("；")
+      : data.message || data.msg || JSON.stringify(data);
+  } else if (resp?.error) {
+    const error = resp.error as any;
+    detail = error.localizedDescription || error.message || JSON.stringify(error);
+  } else {
+    detail = "接口没有返回内容";
+  }
+
+  $log.error(`[墨墨] ${action}失败：HTTP ${status ?? "未知"}，${JSON.stringify(data ?? resp?.error ?? null)}`);
+  return `${action}失败（HTTP ${status ?? "未知"}：${String(detail).slice(0, 200)}）`;
+}
+
 function getEntryKey(value: string) {
   const firstLine = value.trim().split(/\r?\n/, 1)[0].trim();
   const match = firstLine.match(/^(.+?)\s+\/[^/]+\/(?:\s|$)/);
@@ -58,8 +89,7 @@ export async function createNotepad(entries: string[]) {
   const header = getHeader();
   const todayDate = new Date().toLocaleDateString("en-CA");
 
-  return $http
-    .request<MaimemoNotepadResponse>({
+  return loggedRequest<MaimemoNotepadResponse>({
       method: "POST",
       url: `${apiEndpoint}/notepads`,
       header,
@@ -75,7 +105,7 @@ export async function createNotepad(entries: string[]) {
     })
     .then((_resp) => {
       const resp = _resp.data;
-      if (resp.success && resp.data?.notepad) {
+      if (resp?.success && resp.data?.notepad) {
         const notepadId = resp.data.notepad.id;
         $file.write({
           data: $data.fromUTF8(notepadId),
@@ -84,7 +114,7 @@ export async function createNotepad(entries: string[]) {
         return `云词本创建成功，词条 ${getEntryLabels(entries).join(", ")} 已添加`;
       }
 
-      throw new Error("创建云词本失败，词条未能成功添加");
+      throw new Error(`${describeFailure("创建云词本", _resp)}，词条未能成功添加`);
     });
 }
 
@@ -92,16 +122,17 @@ export async function addWordsToNotepad(notepadId: string, entries: string[]) {
   const header = getHeader();
   const todayDate = new Date().toLocaleDateString("en-CA");
 
-  return $http
-    .request<MaimemoNotepadResponse>({
+  return loggedRequest<MaimemoNotepadResponse>({
       method: "GET",
       url: `${apiEndpoint}/notepads/${notepadId}`,
       header,
     })
     .then((_resp) => {
       const resp = _resp.data;
-      if (!resp.success || !resp.data?.notepad) {
-        throw new Error("添加词条到云词本失败（未找到云词本）");
+      if (!resp?.success || !resp.data?.notepad) {
+        throw new Error(
+          `${describeFailure(`读取云词本 ${notepadId} `, _resp)}，请检查「墨墨云词本 ID」是否正确`
+        );
       }
 
       const { status, content, title, brief, tags } = resp.data.notepad;
@@ -156,8 +187,7 @@ export async function addWordsToNotepad(notepadId: string, entries: string[]) {
       };
     })
     .then((result) =>
-      $http
-        .request<MaimemoNotepadResponse>({
+      loggedRequest<MaimemoNotepadResponse>({
           method: "POST",
           url: `${apiEndpoint}/notepads/${notepadId}`,
           header,
@@ -165,7 +195,7 @@ export async function addWordsToNotepad(notepadId: string, entries: string[]) {
         })
         .then((_resp) => {
           if (!_resp.data?.success) {
-            throw new Error("添加词条到云词本失败");
+            throw new Error(describeFailure("保存云词本", _resp));
           }
 
           const messages: string[] = [];
@@ -187,15 +217,14 @@ export async function addWordsToNotepad(notepadId: string, entries: string[]) {
 export async function findVocabularyId(
   spelling: string
 ): Promise<string | null> {
-  return $http
-    .request<MaimemoVocabularyResponse>({
+  return loggedRequest<MaimemoVocabularyResponse>({
       method: "GET",
       url: `${apiEndpoint}/vocabulary?spelling=${encodeURIComponent(spelling)}`,
       header: getHeader(),
     })
     .then((_resp) => {
       const resp = _resp.data;
-      return resp.success && resp.data?.voc?.id ? resp.data.voc.id : null;
+      return resp?.success && resp.data?.voc?.id ? resp.data.voc.id : null;
     });
 }
 
@@ -216,7 +245,7 @@ export async function addSentenceToWord(
         throw new Error(`墨墨词库中没有收录单词 ${word}`);
       }
 
-      return $http.request<MaimemoResponse>({
+      return loggedRequest<MaimemoResponse>({
         method: "POST",
         url: `${apiEndpoint}/phrases`,
         header,
@@ -232,9 +261,9 @@ export async function addSentenceToWord(
       });
     })
     .then((_resp) => {
-      if (_resp.data.success) {
+      if (_resp.data?.success) {
         return `例句已添加到单词 ${word}`;
       }
-      throw new Error(`添加例句到单词 ${word} 失败`);
+      throw new Error(describeFailure(`添加例句到单词 ${word} `, _resp));
     });
 }

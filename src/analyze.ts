@@ -1,127 +1,102 @@
-import { AnalyzedTerm, SentenceAnalysis } from "./types";
-import { chatWithLLM } from "./translate";
+import { chatWithProvider, LLMProvider } from "./translate";
 
-const analysisPrompt = [
-  "你是英语词汇学习助手。分析用户给出的英文句子或短文，返回一个 JSON 对象，不要使用 Markdown 代码块，也不要添加 JSON 以外的文字。",
-  "JSON 格式必须是：",
-  '{"translation":"整句简体中文翻译","terms":[{"term":"词或短语","kind":"word 或 phrase","ipa":"国际音标，不要加斜线","partOfSpeech":"中文词性","meaning":"简洁中文释义","formAndSound":"词形变化说明与读音联想","etymology":"可靠词源；不确定时留空","codePath":"概念性的代码模块/包路径","className":"类名","classResponsibility":"该类的职责","contrast":"概念A vs 概念B","image":"帮助记忆的画面感比喻","homophone":"中文谐音助记"}]}',
-  "提取句中值得学习的内容词、固定搭配、动词短语和习语；不要收录冠词、介词等普通功能词。尽量保留原文词形，重复词条去重，按对理解句子的价值排序，最多返回 8 个。",
-  "每个词条都必须有 IPA、词性、中文释义、词形与读音联想、代码场景、概念对比、画面比喻和谐音助记。短语的词性可写‘短语’或具体搭配类型。",
-  "词源只在你有把握时提供，不确定时将 etymology 设为空字符串；不要编造词源、神话或历史事实。",
-  "代码场景是帮助记忆的虚构类比，不是对用户真实代码库的描述。请给出类似 src/cache/ttl.ts 的概念路径、一个类名和一句职责说明。",
-  "translation 必须是原文的完整简体中文翻译；如果输入还包含用户指定词条，不能把词条清单翻译进 translation。",
+const MAX_TERMS = 8;
+
+const extractPrompt = [
+  "你是英语词汇提取助手。从用户给出的英文内容中，提取值得学习的单词和短语（固定搭配、动词短语、习语）。",
+  "不要翻译，不要解释，不要分析。只输出一个 JSON 对象，格式为：{\"terms\":[\"word\",\"phrase\"]}",
+  "单词使用词典原形（动词原形、名词单数）；短语使用常见的词典形式。",
+  "不要收录冠词、介词、代词等普通功能词，也不要收录人名、地名等专有名词。",
+  `重复项去重，按学习价值排序，最多返回 ${MAX_TERMS} 个。没有值得学习的词时返回 {"terms":[]}。`,
+  "不要使用 Markdown 代码块，JSON 之后不要输出任何内容。",
 ].join("\n");
 
-function getString(record: Record<string, unknown>, key: string) {
-  const value = record[key];
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function requiredSingleLine(
-  record: Record<string, unknown>,
-  key: string,
-  label: string
-) {
-  const value = getString(record, key).replace(/[\r\n]+/g, " ").trim();
-  if (!value) {
-    throw new Error(`大模型返回的词条缺少${label}`);
+/** 从模型输出里取出第一个完整的 JSON 对象（忽略思考过程、代码块和前后说明文字） */
+function extractJsonObject(response: string) {
+  let text = response;
+  const thinkEnd = text.toLowerCase().lastIndexOf("</think>");
+  if (thinkEnd >= 0) {
+    text = text.slice(thinkEnd + "</think>".length);
+  } else if (/<think>/i.test(text)) {
+    throw new Error("大模型的思考过程被截断，没有输出结果，请重试");
   }
-  return value;
-}
+  text = text.replace(/```(?:json)?/gi, "");
 
-function parseTerm(value: unknown): AnalyzedTerm {
-  if (!value || typeof value !== "object") {
-    throw new Error("大模型返回了无法识别的词条");
+  const start = text.indexOf("{");
+  if (start < 0) {
+    throw new Error("大模型没有返回有效的词条 JSON");
   }
 
-  const record = value as Record<string, unknown>;
-  const rawKind = getString(record, "kind");
-  const etymology = getString(record, "etymology").replace(/[\r\n]+/g, " ");
-
-  return {
-    term: requiredSingleLine(record, "term", "词或短语"),
-    kind: /phrase|短语|词组|搭配/i.test(rawKind) ? "phrase" : "word",
-    ipa: requiredSingleLine(record, "ipa", "音标"),
-    partOfSpeech: requiredSingleLine(record, "partOfSpeech", "词性"),
-    meaning: requiredSingleLine(record, "meaning", "中文释义"),
-    formAndSound: requiredSingleLine(record, "formAndSound", "词形和读音联想"),
-    etymology,
-    codePath: requiredSingleLine(record, "codePath", "代码场景路径"),
-    className: requiredSingleLine(record, "className", "代码场景类名"),
-    classResponsibility: requiredSingleLine(
-      record,
-      "classResponsibility",
-      "代码场景职责"
-    ),
-    contrast: requiredSingleLine(record, "contrast", "概念对比"),
-    image: requiredSingleLine(record, "image", "画面比喻"),
-    homophone: requiredSingleLine(record, "homophone", "谐音助记"),
-  };
+  // 按括号配对找到对象结尾，JSON 后面再跟说明文字时也能正确截取
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) {
+      return text.slice(start, i + 1);
+    }
+  }
+  throw new Error("大模型返回的 JSON 不完整（可能被截断），请重试");
 }
 
-function parseAnalysis(response: string): SentenceAnalysis {
-  const withoutThinking = response.replace(/<think>[\s\S]*?<\/think>/gi, "");
-  const jsonStart = withoutThinking.indexOf("{");
-  const jsonEnd = withoutThinking.lastIndexOf("}");
-
-  if (jsonStart < 0 || jsonEnd <= jsonStart) {
-    throw new Error("大模型没有返回有效的句子分析 JSON");
-  }
-
-  let parsed: Record<string, unknown>;
+function parseTerms(response: string): string[] {
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(withoutThinking.slice(jsonStart, jsonEnd + 1));
-  } catch (_error) {
-    throw new Error("大模型返回的句子分析格式无法解析，请重试");
+    parsed = JSON.parse(extractJsonObject(response));
+  } catch (error) {
+    $log.error(`词条提取解析失败，模型原始输出：${response}`);
+    if (error instanceof SyntaxError) {
+      throw new Error("大模型返回的词条不是合法 JSON，请重试");
+    }
+    throw error;
   }
 
-  const translation = getString(parsed, "translation");
-  const rawTerms = parsed.terms;
-  if (!translation || !Array.isArray(rawTerms)) {
-    throw new Error("大模型返回的句子分析缺少译文或词条列表");
+  const rawTerms = (parsed as { terms?: unknown })?.terms;
+  if (!Array.isArray(rawTerms)) {
+    throw new Error("大模型返回的结果缺少词条列表");
   }
 
   const seen = new Set<string>();
-  const terms = rawTerms
-    .slice(0, 8)
-    .map(parseTerm)
-    .filter((term) => {
-      const key = term.term.toLocaleLowerCase();
-      if (seen.has(key)) {
-        return false;
-      }
+  const terms: string[] = [];
+  for (const item of rawTerms) {
+    // 兼容模型偶尔返回 {"term": "..."} 对象的情况
+    const value =
+      typeof item === "string"
+        ? item
+        : item && typeof item === "object" && typeof item.term === "string"
+        ? item.term
+        : "";
+    const term = value.replace(/\s+/g, " ").trim();
+    const key = term.toLocaleLowerCase();
+    if (term && !seen.has(key)) {
       seen.add(key);
-      return true;
-    });
-
-  return { translation, terms };
-}
-
-export async function analyzeSentence(text: string, preferredTerms: string[] = []) {
-  const input = preferredTerms.length
-    ? `待分析的英文原句：\n${text}\n\n用户特别指定要整理的词/短语：${preferredTerms.join(", ")}。请将它们纳入 terms。`
-    : "";
-  return chatWithLLM(analysisPrompt, input || text).then(parseAnalysis);
-}
-
-export function formatCustomTerm(term: AnalyzedTerm) {
-  const ipa = term.ipa.replace(/^\/+|\/+$/g, "");
-  const lines = [
-    `${term.term} /${ipa}/ ${term.partOfSpeech} ${term.meaning}`,
-    `【词形】${term.formAndSound}`,
-  ];
-
-  if (term.etymology) {
-    lines.push(`【词源】${term.etymology}`);
+      terms.push(term);
+    }
   }
+  return terms.slice(0, MAX_TERMS);
+}
 
-  lines.push(
-    `【场景】代码定位 ${term.codePath}：`,
-    `▸ ${term.className} ${term.classResponsibility}`,
-    `【对比】${term.contrast}`,
-    `【画面】${term.image}`,
-    `谐音 ${term.homophone}`
-  );
-
-  return lines.join("\n");
+/** 让大模型从英文内容中拆出单词和短语，只返回词条列表 */
+export async function extractTerms(text: string, provider: LLMProvider) {
+  const response = await chatWithProvider(provider, extractPrompt, text);
+  try {
+    return parseTerms(response);
+  } catch (_error) {
+    // 模型偶尔输出不合法的 JSON，重试一次
+    const retry = await chatWithProvider(
+      provider,
+      extractPrompt,
+      `${text}\n\n（注意：只输出一个合法 JSON 对象。）`
+    );
+    return parseTerms(retry);
+  }
 }

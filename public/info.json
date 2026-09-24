@@ -1,9 +1,9 @@
 {
   "identifier": "cc.chriscurry.bobplugin.maimemo.notebook",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "category": "translate",
   "name": "墨墨云词本",
-  "summary": "导入单词到墨墨云词本，支持 MiniMax CN AI 分析词汇、短语和例句",
+  "summary": "导入单词到墨墨云词本，支持 MiniMax CN AI 从句子中提取单词和短语",
   "author": "Chris Curry <hichriscurry@gmail.com>",
   "homepage": "https://github.com/Rowan-rh/bob-plugin-maimemo-notebook",
   "appcast": "https://raw.githubusercontent.com/Rowan-rh/bob-plugin-maimemo-notebook/codex/maimemo-customization/appcast.json",
@@ -46,6 +46,31 @@
       ],
       "defaultValue": "false",
       "isKeyOption": true
+    },
+    {
+      "identifier": "extractProvider",
+      "type": "menu",
+      "title": "AI 提取词条服务",
+      "desc": "翻译英文句子或段落时，用哪个大模型拆出其中的单词和短语（需在下方填写对应的 API Key，模型在各自的模型选项中选择）。MiniMax 为推理模型，会先思考再回答；智谱 GLM-4-Flash 不带思考过程，免费且更快",
+      "defaultValue": "minimax",
+      "menuValues": [
+        {
+          "value": "minimax",
+          "title": "MiniMax CN"
+        },
+        {
+          "value": "bigmodel",
+          "title": "智谱"
+        },
+        {
+          "value": "openai",
+          "title": "OpenAI"
+        },
+        {
+          "value": "off",
+          "title": "关闭"
+        }
+      ]
     },
     {
       "identifier": "openaiApiKey",
@@ -119,7 +144,7 @@
       "identifier": "miniMaxCNApiKey",
       "type": "text",
       "title": "MiniMax CN API Token",
-      "desc": "填写 MiniMax 国内版开放平台的 API Key。配置后，英文输入会由 AI 自动整理单词和短语，并生成未收录词条的记忆内容。",
+      "desc": "填写 MiniMax 国内版开放平台的 API Key。「AI 提取词条服务」选择 MiniMax CN 时使用",
       "textConfig": {
         "type": "secure"
       }
