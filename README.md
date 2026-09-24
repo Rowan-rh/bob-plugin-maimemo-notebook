@@ -1,16 +1,16 @@
 <div>
   <h1 align="center">墨墨背单词云词本 Bob 插件</h1>
   <p align="center">
-    <a href="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases" target="_blank">
-        <img src="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/actions/workflows/release.yaml/badge.svg" alt="release">
+    <a href="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases" target="_blank">
+        <img src="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/actions/workflows/release.yaml/badge.svg" alt="release">
     </a>
-    <a href="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases">
-        <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/chriscurrycc/bob-plugin-maimemo-notebook?style=flat">
+    <a href="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases">
+        <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/Rowan-rh/bob-plugin-maimemo-notebook?style=flat">
     </a>
-    <a href="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases">
+    <a href="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases">
         <img alt="GitHub Repo stars" src="https://img.shields.io/badge/Maimemo-Notebook-brightgreen?style=flat">
     </a>
-    <a href="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases">
+    <a href="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases">
         <img alt="GitHub Repo stars" src="https://img.shields.io/badge/langurage-TypeScript-brightgreen?style=flat&color=blue">
     </a>
   </p>
@@ -58,7 +58,7 @@
 
 1. 安装 [Bob](https://bobtranslate.com/guide/#%E5%AE%89%E8%A3%85) (版本 >= 0.50)，一款 macOS 平台的翻译和 OCR 软件
 
-2. 下载此插件: [bobplugin-maimemo-notebook.bobplugin](https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases/latest)
+2. 下载此插件: [bobplugin-maimemo-notebook.bobplugin](https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases/latest)
 
 3. 下载完成后双击 `bobplugin-maimemo-notebook.bobplugin` 文件以安装此插件，并在服务中找到并添加
 

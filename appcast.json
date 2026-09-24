@@ -2,6 +2,14 @@
   "identifier": "cc.chriscurry.bobplugin.maimemo.notebook",
   "versions": [
     {
+      "version": "0.4.0",
+      "desc": "支持 MiniMax CN AI 词汇与短语分析，并生成自定义词条",
+      "sha256": "7967a1797a31fe2bb8215e6796a37bd413634ad7010621017ec88719fe3ab3f2",
+      "url": "https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases/download/v0.4.0/bobplugin-maimemo-notebook.bobplugin",
+      "minBobVersion": "0.5.0",
+      "timestamp": 1790233901000
+    },
+    {
       "version": "0.3.1",
       "desc": "fix public version mismatch",
       "sha256": "129b765fa30d310f536bf60e43d724177210c555c4a7fe700b540cb693cce448",

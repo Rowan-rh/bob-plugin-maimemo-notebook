@@ -1,12 +1,12 @@
 {
   "identifier": "cc.chriscurry.bobplugin.maimemo.notebook",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "category": "translate",
   "name": "墨墨云词本",
   "summary": "导入单词到墨墨云词本，支持 MiniMax CN AI 分析词汇、短语和例句",
   "author": "Chris Curry <hichriscurry@gmail.com>",
-  "homepage": "https://github.com/chriscurrycc/bob-plugin-maimemo-notebook",
-  "appcast": "https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/raw/main/appcast.json",
+  "homepage": "https://github.com/Rowan-rh/bob-plugin-maimemo-notebook",
+  "appcast": "https://raw.githubusercontent.com/Rowan-rh/bob-plugin-maimemo-notebook/codex/maimemo-customization/appcast.json",
   "minBobVersion": "0.5.0",
   "options": [
     {
