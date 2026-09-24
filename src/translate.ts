@@ -12,6 +12,7 @@ interface ChatCompletionResponse {
     status_msg?: string;
   };
   choices?: {
+    finish_reason?: string;
     message?: {
       content?: string;
     };
@@ -40,14 +41,35 @@ function getBearerToken(apiKey: string) {
     : `Bearer ${apiKey.trim()}`;
 }
 
-function getChatCompletionContent(resp: ChatCompletionResponse) {
+function getChatCompletionContent(
+  raw: ChatCompletionResponse | string | undefined
+) {
+  let resp: ChatCompletionResponse | undefined;
+  if (typeof raw === "string") {
+    try {
+      resp = JSON.parse(raw);
+    } catch (_error) {
+      throw new Error(`大模型接口返回了非 JSON 响应：${raw.slice(0, 120)}`);
+    }
+  } else {
+    resp = raw;
+  }
+  if (!resp) {
+    throw new Error("大模型接口没有返回内容，请检查网络或 API Key");
+  }
+
   if (resp.base_resp && resp.base_resp.status_code !== undefined) {
     if (resp.base_resp.status_code !== 0) {
       throw new Error(resp.base_resp.status_msg || "大模型请求失败");
     }
   }
 
-  const content = resp.choices?.[0]?.message?.content?.trim();
+  const choice = resp.choices?.[0];
+  if (choice?.finish_reason === "length") {
+    throw new Error("大模型输出超过长度上限被截断，请减少划选内容后重试");
+  }
+
+  const content = choice?.message?.content?.trim();
   if (!content) {
     throw new Error("大模型没有返回文本");
   }
@@ -73,7 +95,8 @@ async function chatByMiniMaxCN(systemPrompt: string, input: string) {
         ],
         stream: false,
         temperature: 0.2,
-        max_completion_tokens: 4096,
+        // 推理模型的思考过程也计入该上限，4096 很容易把 JSON 截断
+        max_completion_tokens: 16384,
       },
     })
     .then((_resp) => getChatCompletionContent(_resp.data));

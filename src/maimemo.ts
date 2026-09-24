@@ -75,7 +75,7 @@ export async function createNotepad(entries: string[]) {
     })
     .then((_resp) => {
       const resp = _resp.data;
-      if (resp.success && resp.data?.notepad) {
+      if (resp?.success && resp.data?.notepad) {
         const notepadId = resp.data.notepad.id;
         $file.write({
           data: $data.fromUTF8(notepadId),
@@ -100,7 +100,7 @@ export async function addWordsToNotepad(notepadId: string, entries: string[]) {
     })
     .then((_resp) => {
       const resp = _resp.data;
-      if (!resp.success || !resp.data?.notepad) {
+      if (!resp?.success || !resp.data?.notepad) {
         throw new Error("添加词条到云词本失败（未找到云词本）");
       }
 
@@ -195,7 +195,7 @@ export async function findVocabularyId(
     })
     .then((_resp) => {
       const resp = _resp.data;
-      return resp.success && resp.data?.voc?.id ? resp.data.voc.id : null;
+      return resp?.success && resp.data?.voc?.id ? resp.data.voc.id : null;
     });
 }
 
@@ -232,7 +232,7 @@ export async function addSentenceToWord(
       });
     })
     .then((_resp) => {
-      if (_resp.data.success) {
+      if (_resp.data?.success) {
         return `例句已添加到单词 ${word}`;
       }
       throw new Error(`添加例句到单词 ${word} 失败`);

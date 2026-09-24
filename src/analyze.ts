@@ -10,6 +10,7 @@ const analysisPrompt = [
   "词源只在你有把握时提供，不确定时将 etymology 设为空字符串；不要编造词源、神话或历史事实。",
   "代码场景是帮助记忆的虚构类比，不是对用户真实代码库的描述。请给出类似 src/cache/ttl.ts 的概念路径、一个类名和一句职责说明。",
   "translation 必须是原文的完整简体中文翻译；如果输入还包含用户指定词条，不能把词条清单翻译进 translation。",
+  "输出必须是可被 JSON.parse 直接解析的合法 JSON：字符串值内部禁止出现英文双引号和换行，需要引用时使用「」；JSON 之后不要输出任何内容。",
 ].join("\n");
 
 function getString(record: Record<string, unknown>, key: string) {
@@ -29,12 +30,20 @@ function requiredSingleLine(
   return value;
 }
 
-function parseTerm(value: unknown): AnalyzedTerm {
+function parseTerm(value: unknown): AnalyzedTerm | null {
   if (!value || typeof value !== "object") {
-    throw new Error("大模型返回了无法识别的词条");
+    return null;
   }
+  try {
+    return parseTermRecord(value as Record<string, unknown>);
+  } catch (error) {
+    $log.error(`跳过不完整的词条：${JSON.stringify(value)}；${error}`);
+    return null;
+  }
+}
 
-  const record = value as Record<string, unknown>;
+function parseTermRecord(record: Record<string, unknown>): AnalyzedTerm {
+
   const rawKind = getString(record, "kind");
   const etymology = getString(record, "etymology").replace(/[\r\n]+/g, " ");
 
@@ -59,20 +68,53 @@ function parseTerm(value: unknown): AnalyzedTerm {
   };
 }
 
-function parseAnalysis(response: string): SentenceAnalysis {
-  const withoutThinking = response.replace(/<think>[\s\S]*?<\/think>/gi, "");
-  const jsonStart = withoutThinking.indexOf("{");
-  const jsonEnd = withoutThinking.lastIndexOf("}");
+/** 从模型输出里取出第一个完整的 JSON 对象（忽略思考过程、代码块和前后说明文字） */
+function extractJsonObject(response: string) {
+  let text = response;
+  const thinkEnd = text.toLowerCase().lastIndexOf("</think>");
+  if (thinkEnd >= 0) {
+    text = text.slice(thinkEnd + "</think>".length);
+  } else if (/<think>/i.test(text)) {
+    throw new Error("大模型的思考过程被截断，没有输出结果，请重试");
+  }
+  text = text.replace(/```(?:json)?/gi, "");
 
-  if (jsonStart < 0 || jsonEnd <= jsonStart) {
+  const start = text.indexOf("{");
+  if (start < 0) {
     throw new Error("大模型没有返回有效的句子分析 JSON");
   }
 
+  // 按括号配对找到对象结尾，JSON 后面再跟说明文字时也能正确截取
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) {
+      return text.slice(start, i + 1);
+    }
+  }
+  throw new Error("大模型返回的 JSON 不完整（可能被截断），请重试");
+}
+
+function parseAnalysis(response: string): SentenceAnalysis {
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(withoutThinking.slice(jsonStart, jsonEnd + 1));
-  } catch (_error) {
-    throw new Error("大模型返回的句子分析格式无法解析，请重试");
+    parsed = JSON.parse(extractJsonObject(response));
+  } catch (error) {
+    $log.error(`句子分析解析失败，模型原始输出：${response}`);
+    if (error instanceof SyntaxError) {
+      throw new Error("大模型返回的句子分析不是合法 JSON，请重试");
+    }
+    throw error;
   }
 
   const translation = getString(parsed, "translation");
@@ -85,7 +127,10 @@ function parseAnalysis(response: string): SentenceAnalysis {
   const terms = rawTerms
     .slice(0, 8)
     .map(parseTerm)
-    .filter((term) => {
+    .filter((term): term is AnalyzedTerm => {
+      if (!term) {
+        return false;
+      }
       const key = term.term.toLocaleLowerCase();
       if (seen.has(key)) {
         return false;
@@ -101,7 +146,18 @@ export async function analyzeSentence(text: string, preferredTerms: string[] = [
   const input = preferredTerms.length
     ? `待分析的英文原句：\n${text}\n\n用户特别指定要整理的词/短语：${preferredTerms.join(", ")}。请将它们纳入 terms。`
     : "";
-  return chatWithLLM(analysisPrompt, input || text).then(parseAnalysis);
+  const userInput = input || text;
+  const response = await chatWithLLM(analysisPrompt, userInput);
+  try {
+    return parseAnalysis(response);
+  } catch (_error) {
+    // 模型偶尔输出不合法的 JSON，重试一次并强调格式要求
+    const retry = await chatWithLLM(
+      analysisPrompt,
+      `${userInput}\n\n（注意：只输出一个合法 JSON 对象，字符串内不要使用英文双引号。）`
+    );
+    return parseAnalysis(retry);
+  }
 }
 
 export function formatCustomTerm(term: AnalyzedTerm) {
