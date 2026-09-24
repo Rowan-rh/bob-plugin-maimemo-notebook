@@ -1,3 +1,4 @@
+import { loggedRequest } from "./logger";
 const bigModelApiEndpoint =
   "https://open.bigmodel.cn/api/paas/v4/chat/completions";
 
@@ -85,8 +86,7 @@ function getChatCompletionContent(
 
 async function chatByMiniMaxCN(systemPrompt: string, input: string) {
   const apiKey = $option.miniMaxCNApiKey!;
-  return $http
-    .request<ChatCompletionResponse>({
+  return loggedRequest<ChatCompletionResponse>({
       method: "POST",
       url: miniMaxCNApiEndpoint,
       header: {
@@ -109,8 +109,7 @@ async function chatByMiniMaxCN(systemPrompt: string, input: string) {
 }
 
 async function chatByBigModel(systemPrompt: string, input: string) {
-  return $http
-    .request<ChatCompletionResponse>({
+  return loggedRequest<ChatCompletionResponse>({
       method: "POST",
       url: bigModelApiEndpoint,
       header: {
@@ -129,8 +128,7 @@ async function chatByBigModel(systemPrompt: string, input: string) {
 }
 
 async function chatByOpenAI(systemPrompt: string, input: string) {
-  return $http
-    .request<OpenAIResponse>({
+  return loggedRequest<OpenAIResponse>({
       method: "POST",
       url: openaiApiEndpoint,
       header: {

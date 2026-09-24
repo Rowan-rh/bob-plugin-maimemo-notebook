@@ -5,6 +5,7 @@ import {
   notepadIdFilePath,
 } from "./maimemo";
 import { extractTerms } from "./analyze";
+import { logFilePath, summarize, writeLog } from "./logger";
 import {
   hasProviderKey,
   LLMProvider,
@@ -49,7 +50,27 @@ async function extractAndAddTerms(
 }
 
 export function translate(query: BobQuery) {
-  const { text, detectFrom, onCompletion } = query;
+  const { text, detectFrom } = query;
+  writeLog(
+    `==== 新请求 ==== 语言：${detectFrom}，文本：${summarize(text)}；配置：` +
+      summarize({
+        墨墨Token: !!$option.maimemoToken,
+        云词本ID: $option.notepadId || "（未填写）",
+        缓存的云词本ID: $file.exists(notepadIdFilePath)
+          ? $file.read(notepadIdFilePath).toUTF8()
+          : "（无）",
+        例句模式: $option.canAddSentence,
+        提取服务: $option.extractProvider || "minimax（默认）",
+        MiniMaxKey: !!$option.miniMaxCNApiKey,
+        MiniMax模型: $option.miniMaxCNModel,
+        智谱Key: !!$option.bigModelApiKey,
+        OpenAIKey: !!$option.openaiApiKey,
+      })
+  );
+  const onCompletion: typeof query.onCompletion = (result) => {
+    writeLog(`==== 结束 ==== ${summarize(result)}（日志文件：${logFilePath}）`);
+    query.onCompletion(result);
+  };
   const {
     maimemoToken,
     notepadId: _notepadId,

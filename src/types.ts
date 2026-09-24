@@ -26,6 +26,10 @@ interface BobTranslationError {
 
 interface BobResponseJSONData<T = unknown> {
   data: T;
+  response?: {
+    statusCode?: number;
+  };
+  error?: unknown;
 }
 
 interface BobDataObject {
