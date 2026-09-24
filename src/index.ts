@@ -2,13 +2,102 @@ import {
   createNotepad,
   addSentenceToWord,
   addWordsToNotepad,
+  findVocabularyId,
   notepadIdFilePath,
 } from "./maimemo";
+import { analyzeSentence, formatCustomTerm } from "./analyze";
 import { translateByLLM } from "./translate";
 import { BobQuery, BobTranslationErrorType } from "./types";
 
 export function supportLanguages() {
   return ["zh-Hans", "en"];
+}
+
+async function addEntriesToNotepad(entries: string[], configuredNotepadId?: string) {
+  let notepadId = configuredNotepadId;
+  if (!notepadId && $file.exists(notepadIdFilePath)) {
+    notepadId = $file.read(notepadIdFilePath).toUTF8();
+  }
+
+  return notepadId
+    ? addWordsToNotepad(notepadId, entries)
+    : createNotepad(entries);
+}
+
+async function analyzeAndAddSentence(
+  text: string,
+  configuredNotepadId: string | undefined,
+  canAddSentence: boolean
+) {
+  const paragraphs = text
+    .split(/\r?\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const hasManualTermList = canAddSentence && paragraphs.length > 1;
+  const sentence = hasManualTermList
+    ? paragraphs.slice(1).join("\n")
+    : text.trim();
+  const preferredTerms = hasManualTermList
+    ? paragraphs[0]
+        .split(",")
+        .map((term) => term.trim())
+        .filter(Boolean)
+    : [];
+  const analysis = await analyzeSentence(sentence, preferredTerms);
+  if (analysis.terms.length === 0) {
+    throw new Error("AI 没有识别出可加入词本的单词或短语");
+  }
+
+  const classifiedTerms = await Promise.all(
+    analysis.terms.map(async (term) => {
+      const vocabularyId = await findVocabularyId(term.term);
+      return {
+        term,
+        vocabularyId,
+        entry: vocabularyId ? term.term : formatCustomTerm(term),
+      };
+    })
+  );
+
+  const notepadMessage = await addEntriesToNotepad(
+    classifiedTerms.map(({ entry }) => entry),
+    configuredNotepadId
+  );
+
+  let exampleMessage = "";
+  if (canAddSentence) {
+    const knownWords = classifiedTerms.filter(
+      ({ term, vocabularyId }) => vocabularyId && term.kind === "word"
+    );
+    if (knownWords.length > 0) {
+      const exampleResults = await Promise.allSettled(
+        knownWords.map(({ term, vocabularyId }) =>
+          addSentenceToWord(
+            term.term,
+            sentence,
+            analysis.translation,
+            vocabularyId!
+          )
+        )
+      );
+      const successCount = exampleResults.filter(
+        (result) => result.status === "fulfilled"
+      ).length;
+      const failureCount = exampleResults.length - successCount;
+      if (successCount > 0) {
+        exampleMessage = `，例句已添加到 ${successCount} 个墨墨词条`;
+      }
+      if (failureCount > 0) {
+        exampleMessage += `，${failureCount} 个例句添加失败`;
+      }
+    }
+  }
+
+  const knownCount = classifiedTerms.filter(
+    ({ vocabularyId }) => !!vocabularyId
+  ).length;
+  const customCount = classifiedTerms.length - knownCount;
+  return `AI 分析完成：墨墨已收录 ${knownCount} 项，自定义词条 ${customCount} 项。${notepadMessage}${exampleMessage}`;
 }
 
 export function translate(query: BobQuery) {
@@ -19,6 +108,7 @@ export function translate(query: BobQuery) {
     canAddSentence: _canAddSentence,
     bigModelApiKey,
     openaiApiKey,
+    miniMaxCNApiKey,
   } = $option;
 
   if (detectFrom !== "en") {
@@ -34,6 +124,32 @@ export function translate(query: BobQuery) {
   const wordNum = text.trim().split(/\s+/);
   const maybeSentence = wordNum.length > 2;
   const canAddSentence = _canAddSentence === "true";
+
+  if (text.trim() && miniMaxCNApiKey) {
+    if (!maimemoToken) {
+      onCompletion({
+        error: {
+          type: BobTranslationErrorType.NoSecretKey,
+          message: "墨墨开放 API Token 未配置",
+        },
+      });
+      return;
+    }
+
+    analyzeAndAddSentence(text, _notepadId, canAddSentence)
+      .then((message) => {
+        onCompletion({ result: { toParagraphs: [message] } });
+      })
+      .catch((error) => {
+        onCompletion({
+          error: {
+            type: BobTranslationErrorType.Network,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+      });
+    return;
+  }
 
   if (maybeSentence && !canAddSentence) {
     onCompletion({
@@ -80,7 +196,7 @@ export function translate(query: BobQuery) {
     if (!sentence) {
       partMessage = "例句创建失败（未检测到例句）";
       finished = true;
-    } else if (!bigModelApiKey && !openaiApiKey) {
+    } else if (!bigModelApiKey && !openaiApiKey && !miniMaxCNApiKey) {
       partMessage = "例句创建失败（未配置大模型 API Key）";
       finished = true;
     } else {

@@ -6,6 +6,29 @@ interface PluginOption {
   notepadId?: string;
   openaiApiKey?: string;
   openaiModel: string;
+  miniMaxCNApiKey?: string;
+  miniMaxCNModel?: string;
+}
+
+export interface AnalyzedTerm {
+  term: string;
+  kind: "word" | "phrase";
+  ipa: string;
+  partOfSpeech: string;
+  meaning: string;
+  formAndSound: string;
+  etymology?: string;
+  codePath: string;
+  className: string;
+  classResponsibility: string;
+  contrast: string;
+  image: string;
+  homophone: string;
+}
+
+export interface SentenceAnalysis {
+  translation: string;
+  terms: AnalyzedTerm[];
 }
 
 interface BobTranslationResult {

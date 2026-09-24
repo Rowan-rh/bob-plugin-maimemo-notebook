@@ -1,9 +1,16 @@
 const bigModelApiEndpoint =
   "https://open.bigmodel.cn/api/paas/v4/chat/completions";
 
+const miniMaxCNApiEndpoint =
+  "https://api.minimaxi.com/v1/text/chatcompletion_v2";
+
 const openaiApiEndpoint = "https://api.openai.com/v1/responses";
 
-interface BigModelCompletionResponse {
+interface ChatCompletionResponse {
+  base_resp?: {
+    status_code?: number;
+    status_msg?: string;
+  };
   choices?: {
     message?: {
       content?: string;
@@ -12,72 +19,69 @@ interface BigModelCompletionResponse {
 }
 
 interface OpenAIResponse {
+  output_text?: string;
   output?: {
     content?: {
-      text: string;
+      text?: string;
     }[];
   }[];
 }
 
-function getPrompt() {
-  const detectFrom = "英语";
-  const detectTo = "中文简体";
-  const prompt =
-    "你是一个翻译专家 : 专注于" +
-    detectFrom +
-    "到" +
-    detectTo +
-    "的翻译，请确保翻译结果的准确性和专业性，同时，请确保翻译结果的翻译质量，不要出现翻译错误，翻译时能够完美确保翻译结果的准确性和专业性，同时符合" +
-    detectTo +
-    "的表达和语法习惯。" +
-    "你拥有如下能力:" +
-    detectFrom +
-    "到" +
-    detectTo +
-    "的专业翻译能力，理解并保持原意，熟悉" +
-    detectTo +
-    "表达习惯。" +
-    "翻译时,请按照如下步骤: " +
-    "1. 仔细阅读并理原文内容" +
-    "2. 务必确保准确性和专业性" +
-    "3. 校对翻译文本，确保符合" +
-    detectTo +
-    "表达习惯,并加以语法润色。" +
-    "4. 请只输出最终翻译文本。";
-
-  return prompt;
+function getTranslationPrompt() {
+  return [
+    "你是英语到简体中文的专业翻译。准确理解原文，保留语气和上下文，译文自然通顺。",
+    "只输出最终译文，不要解释翻译过程。",
+  ].join("\n");
 }
 
-async function translateByOpenAI(sentence: string) {
+function getBearerToken(apiKey: string) {
+  return apiKey.trim().startsWith("Bearer ")
+    ? apiKey.trim()
+    : `Bearer ${apiKey.trim()}`;
+}
+
+function getChatCompletionContent(resp: ChatCompletionResponse) {
+  if (resp.base_resp && resp.base_resp.status_code !== undefined) {
+    if (resp.base_resp.status_code !== 0) {
+      throw new Error(resp.base_resp.status_msg || "大模型请求失败");
+    }
+  }
+
+  const content = resp.choices?.[0]?.message?.content?.trim();
+  if (!content) {
+    throw new Error("大模型没有返回文本");
+  }
+
+  return content;
+}
+
+async function chatByMiniMaxCN(systemPrompt: string, input: string) {
+  const apiKey = $option.miniMaxCNApiKey!;
   return $http
-    .request<OpenAIResponse>({
+    .request<ChatCompletionResponse>({
       method: "POST",
-      url: openaiApiEndpoint,
+      url: miniMaxCNApiEndpoint,
       header: {
-        Authorization: `Bearer ${$option.openaiApiKey}`,
+        Authorization: getBearerToken(apiKey),
         "Content-Type": "application/json",
       },
       body: {
-        model: $option.openaiModel,
-        instructions: getPrompt(),
-        input: sentence,
+        model: $option.miniMaxCNModel || "MiniMax-M3",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: input },
+        ],
+        stream: false,
+        temperature: 0.2,
+        max_completion_tokens: 4096,
       },
     })
-    .then((_resp) => {
-      const resp = _resp.data;
-      const translation = resp.output?.[0]?.content?.[0]?.text;
-
-      if (translation) {
-        return translation;
-      } else {
-        throw new Error("例句翻译失败");
-      }
-    });
+    .then((_resp) => getChatCompletionContent(_resp.data));
 }
 
-async function translateByBigModel(sentence: string) {
+async function chatByBigModel(systemPrompt: string, input: string) {
   return $http
-    .request<BigModelCompletionResponse>({
+    .request<ChatCompletionResponse>({
       method: "POST",
       url: bigModelApiEndpoint,
       header: {
@@ -87,33 +91,67 @@ async function translateByBigModel(sentence: string) {
       body: {
         model: $option.bigModelModel,
         messages: [
-          {
-            role: "system",
-            content: getPrompt(),
-          },
-          {
-            role: "user",
-            content: sentence,
-          },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: input },
         ],
+      },
+    })
+    .then((_resp) => getChatCompletionContent(_resp.data));
+}
+
+async function chatByOpenAI(systemPrompt: string, input: string) {
+  return $http
+    .request<OpenAIResponse>({
+      method: "POST",
+      url: openaiApiEndpoint,
+      header: {
+        Authorization: getBearerToken($option.openaiApiKey!),
+        "Content-Type": "application/json",
+      },
+      body: {
+        model: $option.openaiModel,
+        instructions: systemPrompt,
+        input,
+        max_output_tokens: 4096,
       },
     })
     .then((_resp) => {
       const resp = _resp.data;
-      const translation = resp.choices?.[0]?.message?.content;
+      const content =
+        resp.output_text ||
+        (resp.output || []).reduce(
+          (text, item) =>
+            text +
+            (item.content || [])
+              .map((part) => part.text || "")
+              .join(""),
+          ""
+        );
 
-      if (translation) {
-        return translation;
-      } else {
-        throw new Error("例句翻译失败");
+      if (content?.trim()) {
+        return content.trim();
       }
+
+      throw new Error("大模型没有返回文本");
     });
 }
 
-export async function translateByLLM(sentence: string) {
-  if ($option.openaiApiKey) {
-    return translateByOpenAI(sentence);
-  } else {
-    return translateByBigModel(sentence);
+export async function chatWithLLM(systemPrompt: string, input: string) {
+  if ($option.miniMaxCNApiKey) {
+    return chatByMiniMaxCN(systemPrompt, input);
   }
+
+  if ($option.openaiApiKey) {
+    return chatByOpenAI(systemPrompt, input);
+  }
+
+  if ($option.bigModelApiKey) {
+    return chatByBigModel(systemPrompt, input);
+  }
+
+  throw new Error("未配置大模型 API Key");
+}
+
+export async function translateByLLM(sentence: string) {
+  return chatWithLLM(getTranslationPrompt(), sentence);
 }

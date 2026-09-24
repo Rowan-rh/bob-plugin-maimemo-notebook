@@ -24,14 +24,37 @@ type MaimemoVocabularyResponse = MaimemoResponse<{
 }>;
 
 function getHeader() {
-  const token = $option.maimemoToken!;
+  const token = $option.maimemoToken!.trim();
   return {
     "Content-Type": "application/json",
     Authorization: token.startsWith("Bearer") ? token : `Bearer ${token}`,
   };
 }
 
-export async function createNotepad(words: string[]) {
+function getEntryKey(value: string) {
+  const firstLine = value.trim().split(/\r?\n/, 1)[0].trim();
+  const match = firstLine.match(/^(.+?)\s+\/[^/]+\/(?:\s|$)/);
+  return (match?.[1] || firstLine).trim().toLocaleLowerCase();
+}
+
+function getEntryLabels(entries: string[]) {
+  return entries.map((entry) => getEntryKey(entry));
+}
+
+function serializeEntries(entries: string[]) {
+  return entries.reduce((content, entry, index) => {
+    if (index === 0) {
+      return entry.trim();
+    }
+
+    const previous = entries[index - 1];
+    const separator =
+      entry.includes("\n") || previous.includes("\n") ? "\n\n" : "\n";
+    return `${content}${separator}${entry.trim()}`;
+  }, "");
+}
+
+export async function createNotepad(entries: string[]) {
   const header = getHeader();
   const todayDate = new Date().toLocaleDateString("en-CA");
 
@@ -43,7 +66,7 @@ export async function createNotepad(words: string[]) {
       body: {
         notepad: {
           status: "PUBLISHED",
-          content: `# ${todayDate}\n${words.join("\n")}\n`,
+          content: `# ${todayDate}\n${serializeEntries(entries)}\n`,
           title: "Bob Plugin",
           brief: "Bob 插件录入词汇",
           tags: ["词典"],
@@ -51,21 +74,21 @@ export async function createNotepad(words: string[]) {
       },
     })
     .then((_resp) => {
-      let resp = _resp.data;
+      const resp = _resp.data;
       if (resp.success && resp.data?.notepad) {
         const notepadId = resp.data.notepad.id;
         $file.write({
           data: $data.fromUTF8(notepadId),
           path: notepadIdFilePath,
         });
-        return `云词本创建成功，单词 ${words.join(", ")} 已添加`;
-      } else {
-        throw new Error("创建云词本失败，单词未能成功添加");
+        return `云词本创建成功，词条 ${getEntryLabels(entries).join(", ")} 已添加`;
       }
+
+      throw new Error("创建云词本失败，词条未能成功添加");
     });
 }
 
-export async function addWordsToNotepad(notepadId: string, words: string[]) {
+export async function addWordsToNotepad(notepadId: string, entries: string[]) {
   const header = getHeader();
   const todayDate = new Date().toLocaleDateString("en-CA");
 
@@ -77,102 +100,122 @@ export async function addWordsToNotepad(notepadId: string, words: string[]) {
     })
     .then((_resp) => {
       const resp = _resp.data;
-      if (resp.success && resp.data && resp.data.notepad) {
-        const { status, content, title, brief, tags } = resp.data.notepad;
-        const lines = content.split("\n").map((line) => line.trim());
-        let targetLineIndex = lines.findIndex((line) =>
-          line.startsWith(`# ${todayDate}`)
-        );
-
-        if (targetLineIndex === -1) {
-          lines.unshift("");
-          lines.unshift(`# ${todayDate}`);
-          targetLineIndex = 0;
-        }
-
-        // Deduplicate: filter out words that already exist in lines
-        // Only check actual word entries, exclude headers (lines starting with #) and empty lines
-        const existingWords = new Set(
-          lines
-            .filter(line => line && !line.startsWith('#'))
-            .map(line => line.trim().toLowerCase())
-        );
-        const uniqueWords = [];
-        const duplicateWords = [];
-        for (const word of words) {
-          const trimmedWord = word.trim().toLowerCase();
-          if (existingWords.has(trimmedWord)) {
-            duplicateWords.push(word);
-          } else {
-            uniqueWords.push(word);
-          }
-        }
-
-        lines.splice(targetLineIndex + 1, 0, ...uniqueWords);
-
-        return {
-          notepad: {
-            status,
-            content: lines.join("\n"),
-            title,
-            brief,
-            tags,
-          },
-          uniqueWords,
-          duplicateWords,
-        };
-      } else {
-        throw new Error("添加单词到云词本失败（未找到云词本）");
+      if (!resp.success || !resp.data?.notepad) {
+        throw new Error("添加词条到云词本失败（未找到云词本）");
       }
-    })
-    .then((result) => {
-      return $http.request<MaimemoNotepadResponse>({
-        method: "POST",
-        url: `${apiEndpoint}/notepads/${notepadId}`,
-        header,
-        body: {
-          notepad: result.notepad,
+
+      const { status, content, title, brief, tags } = resp.data.notepad;
+      const lines = content.split("\n").map((line) => line.trim());
+      let targetLineIndex = lines.findIndex((line) =>
+        line.startsWith(`# ${todayDate}`)
+      );
+
+      if (targetLineIndex === -1) {
+        lines.unshift("");
+        lines.unshift(`# ${todayDate}`);
+        targetLineIndex = 0;
+      }
+
+      const existingEntries = new Set(
+        lines.filter((line) => line && !line.startsWith("#")).map(getEntryKey)
+      );
+      const uniqueEntries: string[] = [];
+      const duplicateEntries: string[] = [];
+      for (const entry of entries) {
+        const key = getEntryKey(entry);
+        if (existingEntries.has(key)) {
+          duplicateEntries.push(entry);
+        } else {
+          uniqueEntries.push(entry);
+          existingEntries.add(key);
+        }
+      }
+
+      const newLines: string[] = [];
+      uniqueEntries.forEach((entry, index) => {
+        if (
+          index > 0 &&
+          (entry.includes("\n") || uniqueEntries[index - 1].includes("\n"))
+        ) {
+          newLines.push("");
+        }
+        newLines.push(...entry.trim().split(/\r?\n/));
+      });
+      lines.splice(targetLineIndex + 1, 0, ...newLines);
+
+      return {
+        notepad: {
+          status,
+          content: lines.join("\n"),
+          title,
+          brief,
+          tags,
         },
-      }).then((_resp) => {
-        const resp = _resp.data;
-        if (resp?.success) {
-          const messages = [];
-          if (result.uniqueWords.length > 0) {
-            messages.push(`单词 ${result.uniqueWords.join(", ")} 已添加到云词本`);
+        uniqueEntries,
+        duplicateEntries,
+      };
+    })
+    .then((result) =>
+      $http
+        .request<MaimemoNotepadResponse>({
+          method: "POST",
+          url: `${apiEndpoint}/notepads/${notepadId}`,
+          header,
+          body: { notepad: result.notepad },
+        })
+        .then((_resp) => {
+          if (!_resp.data?.success) {
+            throw new Error("添加词条到云词本失败");
           }
-          if (result.duplicateWords.length > 0) {
-            messages.push(`${result.duplicateWords.join(", ")} 在云词本中已存在`);
+
+          const messages: string[] = [];
+          if (result.uniqueEntries.length > 0) {
+            messages.push(
+              `词条 ${getEntryLabels(result.uniqueEntries).join(", ")} 已添加到云词本`
+            );
+          }
+          if (result.duplicateEntries.length > 0) {
+            messages.push(
+              `${getEntryLabels(result.duplicateEntries).join(", ")} 在云词本中已存在`
+            );
           }
           return messages.join("；");
-        } else {
-          throw new Error("添加单词到云词本失败");
-        }
-      });
+        })
+    );
+}
+
+export async function findVocabularyId(
+  spelling: string
+): Promise<string | null> {
+  return $http
+    .request<MaimemoVocabularyResponse>({
+      method: "GET",
+      url: `${apiEndpoint}/vocabulary?spelling=${encodeURIComponent(spelling)}`,
+      header: getHeader(),
+    })
+    .then((_resp) => {
+      const resp = _resp.data;
+      return resp.success && resp.data?.voc?.id ? resp.data.voc.id : null;
     });
 }
 
 export async function addSentenceToWord(
   word: string,
   sentence: string,
-  translation: string
+  translation: string,
+  vocabularyId?: string
 ) {
   const header = getHeader();
+  const vocabularyIdPromise = vocabularyId
+    ? Promise.resolve(vocabularyId)
+    : findVocabularyId(word);
 
-  return $http
-    .request<MaimemoVocabularyResponse>({
-      method: "GET",
-      url: `${apiEndpoint}/vocabulary?spelling=${word}`,
-      header,
-    })
-    .then((_resp) => {
-      let resp = _resp.data;
-      if (resp.success && resp.data && resp.data.voc?.id) {
-        return resp.data.voc.id;
-      } else {
-        throw new Error("未找到单词");
-      }
-    })
+  return vocabularyIdPromise
     .then((wordId) => {
+      if (!wordId) {
+        throw new Error(`墨墨词库中没有收录单词 ${word}`);
+      }
+
       return $http.request<MaimemoResponse>({
         method: "POST",
         url: `${apiEndpoint}/phrases`,
@@ -189,11 +232,9 @@ export async function addSentenceToWord(
       });
     })
     .then((_resp) => {
-      const resp = _resp.data;
-      if (resp.success) {
+      if (_resp.data.success) {
         return `例句已添加到单词 ${word}`;
-      } else {
-        throw new Error(`添加例句到单词 ${word} 失败`);
       }
+      throw new Error(`添加例句到单词 ${word} 失败`);
     });
 }
