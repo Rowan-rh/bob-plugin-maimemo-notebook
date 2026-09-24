@@ -69,7 +69,13 @@ function getChatCompletionContent(
     throw new Error("大模型输出超过长度上限被截断，请减少划选内容后重试");
   }
 
-  const content = choice?.message?.content?.trim();
+  // MiniMax M2.x 等推理模型会把思考过程以 <think>...</think> 写在正文里，这里统一去掉
+  const content = choice?.message?.content
+    ?.replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .trim();
+  if (content && /^<think>/i.test(content)) {
+    throw new Error("大模型的思考过程被截断，没有输出结果，请重试");
+  }
   if (!content) {
     throw new Error("大模型没有返回文本");
   }
@@ -159,6 +165,43 @@ async function chatByOpenAI(systemPrompt: string, input: string) {
     });
 }
 
+export type LLMProvider = "minimax" | "openai" | "bigmodel";
+
+export const providerNames: Record<LLMProvider, string> = {
+  minimax: "MiniMax CN",
+  openai: "OpenAI",
+  bigmodel: "智谱",
+};
+
+export function hasProviderKey(provider: LLMProvider) {
+  const keys: Record<LLMProvider, string | undefined> = {
+    minimax: $option.miniMaxCNApiKey,
+    openai: $option.openaiApiKey,
+    bigmodel: $option.bigModelApiKey,
+  };
+  return !!keys[provider]?.trim();
+}
+
+/** 使用指定的大模型服务 */
+export async function chatWithProvider(
+  provider: LLMProvider,
+  systemPrompt: string,
+  input: string
+) {
+  if (!hasProviderKey(provider)) {
+    throw new Error(`未配置${providerNames[provider]} API Key`);
+  }
+  switch (provider) {
+    case "minimax":
+      return chatByMiniMaxCN(systemPrompt, input);
+    case "openai":
+      return chatByOpenAI(systemPrompt, input);
+    case "bigmodel":
+      return chatByBigModel(systemPrompt, input);
+  }
+}
+
+/** 按 MiniMax CN > OpenAI > 智谱 的优先级选择已配置的大模型 */
 export async function chatWithLLM(systemPrompt: string, input: string) {
   if ($option.miniMaxCNApiKey) {
     return chatByMiniMaxCN(systemPrompt, input);
