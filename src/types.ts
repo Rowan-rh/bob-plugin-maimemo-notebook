@@ -6,6 +6,9 @@ interface PluginOption {
   notepadId?: string;
   openaiApiKey?: string;
   openaiModel: string;
+  miniMaxCNApiKey?: string;
+  miniMaxCNModel?: string;
+  extractProvider?: string;
 }
 
 interface BobTranslationResult {
@@ -23,6 +26,10 @@ interface BobTranslationError {
 
 interface BobResponseJSONData<T = unknown> {
   data: T;
+  response?: {
+    statusCode?: number;
+  };
+  error?: unknown;
 }
 
 interface BobDataObject {

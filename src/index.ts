@@ -4,22 +4,82 @@ import {
   addWordsToNotepad,
   notepadIdFilePath,
 } from "./maimemo";
-import { translateByLLM } from "./translate";
+import { extractTerms } from "./analyze";
+import { logFilePath, summarize, writeLog } from "./logger";
+import {
+  hasProviderKey,
+  LLMProvider,
+  providerNames,
+  translateByLLM,
+} from "./translate";
 import { BobQuery, BobTranslationErrorType } from "./types";
 
 export function supportLanguages() {
   return ["zh-Hans", "en"];
 }
 
+async function addEntriesToNotepad(entries: string[], configuredNotepadId?: string) {
+  let notepadId = configuredNotepadId;
+  if (!notepadId && $file.exists(notepadIdFilePath)) {
+    notepadId = $file.read(notepadIdFilePath).toUTF8();
+  }
+
+  return notepadId
+    ? addWordsToNotepad(notepadId, entries)
+    : createNotepad(entries);
+}
+
+function getExtractProvider(): LLMProvider | null {
+  const value = $option.extractProvider || "minimax";
+  return value === "minimax" || value === "openai" || value === "bigmodel"
+    ? value
+    : null;
+}
+
+async function extractAndAddTerms(
+  text: string,
+  provider: LLMProvider,
+  configuredNotepadId?: string
+) {
+  const terms = await extractTerms(text.trim(), provider);
+  if (terms.length === 0) {
+    throw new Error("AI 没有提取到可加入词本的单词或短语");
+  }
+  const notepadMessage = await addEntriesToNotepad(terms, configuredNotepadId);
+  return `AI 提取了 ${terms.length} 个词条：${notepadMessage}`;
+}
+
 export function translate(query: BobQuery) {
-  const { text, detectFrom, onCompletion } = query;
+  const { text, detectFrom } = query;
+  writeLog(
+    `==== 新请求 ==== 语言：${detectFrom}，文本：${summarize(text)}；配置：` +
+      summarize({
+        墨墨Token: !!$option.maimemoToken,
+        云词本ID: $option.notepadId || "（未填写）",
+        缓存的云词本ID: $file.exists(notepadIdFilePath)
+          ? $file.read(notepadIdFilePath).toUTF8()
+          : "（无）",
+        例句模式: $option.canAddSentence,
+        提取服务: $option.extractProvider || "minimax（默认）",
+        MiniMaxKey: !!$option.miniMaxCNApiKey,
+        MiniMax模型: $option.miniMaxCNModel,
+        智谱Key: !!$option.bigModelApiKey,
+        OpenAIKey: !!$option.openaiApiKey,
+      })
+  );
+  const onCompletion: typeof query.onCompletion = (result) => {
+    writeLog(`==== 结束 ==== ${summarize(result)}（日志文件：${logFilePath}）`);
+    query.onCompletion(result);
+  };
   const {
     maimemoToken,
     notepadId: _notepadId,
     canAddSentence: _canAddSentence,
     bigModelApiKey,
     openaiApiKey,
+    miniMaxCNApiKey,
   } = $option;
+  const extractProvider = getExtractProvider();
 
   if (detectFrom !== "en") {
     onCompletion({
@@ -34,6 +94,45 @@ export function translate(query: BobQuery) {
   const wordNum = text.trim().split(/\s+/);
   const maybeSentence = wordNum.length > 2;
   const canAddSentence = _canAddSentence === "true";
+  const lineCount = text.split("\n").filter((line) => !!line.trim()).length;
+  // 例句模式下「第一行词条 + 第二行例句」是用户手动指定的格式，走原有流程
+  const hasManualTermList = canAddSentence && lineCount > 1;
+
+  // 开启 AI 提取时，句子/段落交给所选大模型拆出单词和短语；单个单词直接走原有流程
+  if (extractProvider && maybeSentence && !hasManualTermList) {
+    if (!hasProviderKey(extractProvider)) {
+      onCompletion({
+        error: {
+          type: BobTranslationErrorType.NoSecretKey,
+          message: `已选择用${providerNames[extractProvider]}提取词条，但未配置它的 API Key`,
+        },
+      });
+      return;
+    }
+    if (!maimemoToken) {
+      onCompletion({
+        error: {
+          type: BobTranslationErrorType.NoSecretKey,
+          message: "墨墨开放 API Token 未配置",
+        },
+      });
+      return;
+    }
+
+    extractAndAddTerms(text, extractProvider, _notepadId)
+      .then((message) => {
+        onCompletion({ result: { toParagraphs: [message] } });
+      })
+      .catch((error) => {
+        onCompletion({
+          error: {
+            type: BobTranslationErrorType.Network,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+      });
+    return;
+  }
 
   if (maybeSentence && !canAddSentence) {
     onCompletion({
@@ -80,7 +179,7 @@ export function translate(query: BobQuery) {
     if (!sentence) {
       partMessage = "例句创建失败（未检测到例句）";
       finished = true;
-    } else if (!bigModelApiKey && !openaiApiKey) {
+    } else if (!bigModelApiKey && !openaiApiKey && !miniMaxCNApiKey) {
       partMessage = "例句创建失败（未配置大模型 API Key）";
       finished = true;
     } else {

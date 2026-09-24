@@ -1,7 +1,7 @@
 {
   "name": "bobplugin-maimemo-notebook",
-  "version": "0.3.1",
-  "description": "Bob 查询的单词导入到墨墨背单词",
+  "version": "0.4.1",
+  "description": "将 Bob 查询的单词、AI 分析词条和例句导入到墨墨云词本",
   "author": {
     "name": "Chris Curry",
     "email": "hichriscurry@gmail.com"

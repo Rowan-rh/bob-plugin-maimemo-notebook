@@ -1,16 +1,16 @@
 <div>
   <h1 align="center">墨墨背单词云词本 Bob 插件</h1>
   <p align="center">
-    <a href="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases" target="_blank">
-        <img src="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/actions/workflows/release.yaml/badge.svg" alt="release">
+    <a href="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases" target="_blank">
+        <img src="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/actions/workflows/release.yaml/badge.svg" alt="release">
     </a>
-    <a href="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases">
-        <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/chriscurrycc/bob-plugin-maimemo-notebook?style=flat">
+    <a href="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases">
+        <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/Rowan-rh/bob-plugin-maimemo-notebook?style=flat">
     </a>
-    <a href="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases">
+    <a href="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases">
         <img alt="GitHub Repo stars" src="https://img.shields.io/badge/Maimemo-Notebook-brightgreen?style=flat">
     </a>
-    <a href="https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases">
+    <a href="https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases">
         <img alt="GitHub Repo stars" src="https://img.shields.io/badge/langurage-TypeScript-brightgreen?style=flat&color=blue">
     </a>
   </p>
@@ -31,6 +31,8 @@
 本插件可以将 Bob 软件查询的生词直接添加到墨墨云词本。
 
 此外，如果翻译的是句子，在启用例句模式后，可以自行选择例句中的生词，将生词添加到云词本后，还会为所选生词创建当前例句（以及例句的翻译）。这让我们在墨墨不仅仅能背诵生词，还可以查看我们添加的例句。
+
+开启「AI 提取词条服务」后，插件还可以从翻译的英文句子中自动提取有学习价值的单词、固定搭配和短语，直接加入云词本。
 
 保留了上下文的生词，相信你会记得更快！
 
@@ -56,7 +58,7 @@
 
 1. 安装 [Bob](https://bobtranslate.com/guide/#%E5%AE%89%E8%A3%85) (版本 >= 0.50)，一款 macOS 平台的翻译和 OCR 软件
 
-2. 下载此插件: [bobplugin-maimemo-notebook.bobplugin](https://github.com/chriscurrycc/bob-plugin-maimemo-notebook/releases/latest)
+2. 下载此插件: [bobplugin-maimemo-notebook.bobplugin](https://github.com/Rowan-rh/bob-plugin-maimemo-notebook/releases/latest)
 
 3. 下载完成后双击 `bobplugin-maimemo-notebook.bobplugin` 文件以安装此插件，并在服务中找到并添加
 
@@ -84,9 +86,9 @@
 > 1. 其中一个默认展开，只识别单词并录入生词本
 > 2. 另一个默认收起，甚至可以「隐藏并钉到语言栏」，当翻译句子时，自己补充好句子中不懂的生词，然后手动点击，来将单词添加到生词本，以及为单词创建该例句和对应翻译（见演示 gif 后半部分）
 
-创建例句除了要使用墨墨开放 API Token 外，还需要借助于翻译大模型（因为墨墨不能只添加例句，还需要添加对应翻译），插件目前支持 OpenAI 和智谱 AI 作为翻译大模型提供商，OpenAI 的配置优先级更高。
+创建例句除了要使用墨墨开放 API Token 外，还需要借助于翻译大模型（因为墨墨不能只添加例句，还需要添加对应翻译）。插件支持 MiniMax CN、OpenAI 和智谱 AI；同时配置多个提供商时，优先使用 MiniMax CN，其次是 OpenAI，最后是智谱。
 
-如果你使用 OpenAI，那么无疑它是更好的选择，否则你可以使用免费的智谱 AI 模型：
+如果没有配置 MiniMax CN 或 OpenAI，也可以使用免费的智谱 AI 模型：
 
 1. 去[智谱 AI 开放平台](https://bigmodel.cn)注册并登录，复制 [API Key](https://bigmodel.cn/usercenter/apikeys) 粘贴到配置项中的「智谱 API 密钥」
 
@@ -101,6 +103,15 @@
 4. 将例句识别这个版本折叠起来（强烈推荐，这样可以做到单词添加完毕后再手动执行插件）
 
 ![step4](https://github.com/user-attachments/assets/bd07333a-2b5d-4586-9d41-1bd1f84a35cc)
+
+## AI 提取单词和短语
+
+1. 在 Bob 插件配置的「AI 提取词条服务」中选择大模型：MiniMax CN（默认）、智谱、OpenAI，或选择「关闭」；并填写对应服务的 API Key，模型在各自的模型选项中选择。
+   - MiniMax 是推理模型，会先思考再回答；追求速度可以选 `MiniMax-M2.7-highspeed`。
+   - 智谱 `GLM-4-Flash` 不带思考过程，免费且响应快，适合这种简单的提取任务。
+2. 翻译英文句子或段落时，插件会让 AI 拆出其中值得学习的单词（词典原形）、固定搭配和短语，直接加入云词本。AI 只负责提取词条，不做翻译和分析。
+3. 查询单个单词时不会调用 AI，直接加入云词本。
+4. 例句模式下按「第一行词条、第二行例句」手动输入时，仍按原有方式添加单词和例句。
 
 ## 注意事项
 1. 例句录入失败的多数原因是单词未在墨墨词库中收录，请去除单词时态等等重新尝试
